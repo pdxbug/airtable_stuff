@@ -30,9 +30,8 @@
  *
  */
 
-
 /**set the constant variables
-* this creates the budgetTable 'Budget', txTable 'Dev Table', primaryFieldName 'Slug',
+* this create the slugTableName 'Budget', slugTempTableName 'Dev Table', slugTablePrimaryFieldName 'Slug',
 * it pulls in the record ID and record Name that was just created for quick comparison of values
 * sets the debug value false means it will run the slugs into the Budget Table and true means it will only debug
 * preventing any records from being created in the Budget Table (very useful for code debugging without creating 
@@ -40,9 +39,9 @@
 *
 */
 const {
-    budgetTable,
-    txTable,
-    primaryFieldName,
+    slugTableName,
+    slugTempTableName,
+    slugTablePrimaryFieldName,
     thisRecordId,
     thisRecordName,
     debug,
@@ -61,36 +60,38 @@ const createMappingOfUniqueFieldToRecordId = function (records, fieldName) {
 }
 
 // get the table, view and fields we will be pushing to
-const slugTable = base.getTable(budgetTable);
+const slugTable = base.getTable(slugTableName);//Budget
 const slugDailyView = slugTable.getView('Created in last day');
-const slugTempTable = base.getTable(txTable);
-const newRecords = await slugTempTable.selectRecordsAsync(
-    {fields: ["Slug", "Submission Date"],
-    sorts: [
-       {field: "Submission Date"},
-    ]
-    });
-//console.log(newRecords.records)
+const slugTempTable = base.getTable(slugTempTableName);//Dev Table
 
 // load existing records from the DailyView in the Slugs table
 // originally we were trying to pull all records, but this changed for two reasons
 // 1. When you get over 10k records, it was breaking our 30 second limit
 // 2. We only need to pull for today since the auto-slug adds the date and we can only match
-// against today's slugs
-let existingRecords = await slugDailyView.selectRecordsAsync({ fields: slugTable.fields });
-let mapOfUniqueIdToExistingRecordId = createMappingOfUniqueFieldToRecordId(existingRecords.records, primaryFieldName);
+//limit to the slug field as we don't need every field in the search
+let existingRecords = await slugDailyView.selectRecordsAsync({ fields: [slugTablePrimaryFieldName] });
+let mapOfUniqueIdToExistingRecordId = createMappingOfUniqueFieldToRecordId(existingRecords.records, slugTablePrimaryFieldName);
 let newRecord = {id:thisRecordId, name:thisRecordName};
+//used for diagnosing problems
+console.log(newRecord);
+let matchString = newRecord.name;
+console.log("Name: "+matchString);
+
+//pull the new record's information from all fields
+//we will need to organize the new record's information depending on the columns type
+//airtable expects different data formats for Multi-arrays versus text and numbers
+//also we will need to pull the Digital/Online Channels into a single field
+let queryResult = await slugTempTable.selectRecordAsync(
+    newRecord.id,
+    {fields: slugTempTable.fields}
+);
+let thisRecord = queryResult;
 
 // create initial variables
 let counter = -1;
 let recordsToCreate = [];
 let secondaryPubs;
 let primaryCreatedTime = '';
-
-//used for diagnosing problems
-console.log(newRecord);
-let matchString = newRecord.name;
-console.log("Name: "+matchString);
 
 //de duplication
 //use the existing slugs array to see if the new slug already exists
@@ -122,40 +123,26 @@ let fields = {};
 let primaryRecordId = '';
 var DSOsearch = true;
 
-//pull the new record's information from all fields
-//we will need to organize the new record's information depending on the columns type
-//airtable expects different data formats for Multi-arrays versus text and numbers
-//also we will need to pull the Digital/Online Channels into a single field
-let queryResult = await slugTempTable.selectRecordsAsync({fields: slugTempTable.fields});
-let records = queryResult.getRecord(newRecord.id);
-
-//go through each column (field)
+//go through each column (field), everything will be pushed to the SlugTableName //Budget
 for (let field of slugTempTable.fields) {
     //console.log(`Field Name: `+field.name)
-    if (field.name == "Submission Date" || 
-        field.name == "Site Abbrev" || 
-        field.name == "Slug" ) {
+    if (
+        field.name == "Site Abbrev" ||
+        field.name == "Automations complete" ||
+        field.name == "Slug" ||
+        field.name == "Airtable Record ID" 
+    ) {
         //skip due to a field that doesn't exist in Budget table, 
         //or a field that is auto generated in Budget
     } else if (field.name == "Created Time") {
-        primaryCreatedTime = records.getCellValue(field.name);
+        primaryCreatedTime = thisRecord.getCellValue(field.name);
     } else if (field.name == "Secondary Publication") {
-        //get the list of secondary publications for creating the secondary pub records later
-        secondaryPubs = records.getCellValue(field.name);
+        //get the list of secondary publications to write to
+        secondaryPubs = thisRecord.getCellValue(field.name);
         console.log('adding secondary');
-        console.log(records.getCellValue(field.name));
+        console.log(thisRecord.getCellValue(field.name));
     } else if (field.name == "Other Media") {
-        //These are multi and single select fields
-        //requires a different input from text/numbers/etc
-        let queryResult = await slugTempTable.selectRecordsAsync(
-            {
-                fields: [field.name, "Submission Date"],
-                sorts: [
-                    {field: "Submission Date"},
-                ]
-            }
-        );
-        let record = records.getCellValue(field.name);
+        let record = thisRecord.getCellValue(field.name);
         if (record) {
             if (Array.isArray(record)) {
                 //multi select
@@ -166,7 +153,7 @@ for (let field of slugTempTable.fields) {
                 });
                 if (field.name.includes('Keywords')) {
                     //we needed a special configuration for Keywords
-                    //for now we store them in a list/array
+                    //for now we store them in a list/array;
                     if (keywords.length == 0) {
                         console.log('start keywords with '+record);
                         keywords = record;
@@ -202,9 +189,9 @@ for (let field of slugTempTable.fields) {
         //otherwise it would attempt to add each form field into separate
         //fields in budget and error
         if (DSOsearch) {
-            if (records.getCellValue(field.name)) {
+            if (thisRecord.getCellValue(field.name)) {
                 console.log(field.name+` found! `)
-                fields["Channel ID"] = records.getCellValue(field.name);
+                fields["Channel ID"] = thisRecord.getCellValue(field.name);
                 console.log(fields["Channel ID"])
                 DSOsearch = false;
             }
@@ -212,12 +199,12 @@ for (let field of slugTempTable.fields) {
     } else {
         if ((field.name == "Slug" || field.name == "Slug Key") && counter != "-1") {
             //a fix for the slug if there were duplicates
-            fields[field.name] = records.getCellValue(field.name)+'-'+counter;
-        } else if (records.getCellValue(field.name) != null) {
+            fields[field.name] = thisRecord.getCellValue(field.name)+'-'+counter;
+        } else if (thisRecord.getCellValue(field.name) != null) {
             //all other fields not caught above can just be pushed into the field
             //this assumes that the field in Dev Table is EXACTLY the same as the 
             //field in Budget table (including emojis!)
-            fields[field.name] = records.getCellValue(field.name);
+            fields[field.name] = thisRecord.getCellValue(field.name);
         } else {
             //skip anything that is null as it will automatically be null or default
             //value in budget table
@@ -230,10 +217,18 @@ recordsToCreate.push({
     fields
 });
 
-console.log('records to create');
+function clone(object) {
+    var clone ={};
+    for( var key in object ){
+        if(object.hasOwnProperty(key)) //ensure not adding inherited props
+            clone[key]=object[key];
+    }
+    return clone;
+}
+
 console.log(recordsToCreate);
-console.log('secondaries pre sisters');
-console.log(secondaryPubs);
+const publicationTable = base.getTable('🔒 Publications');
+const publicationTitles = await publicationTable.selectRecordsAsync({fields: ['Publication Title']});
 for (let recordToCreate of recordsToCreate) {
     //creating the Primary Publication in Budgets
     if (debug == "false") {
@@ -241,7 +236,7 @@ for (let recordToCreate of recordsToCreate) {
         console.log('primaryRecordId: '+primaryRecordId);
     } else {
         primaryRecordId = 'debug is true';
-        console.log("debug set to true, otherwise would have created the new record in "+budgetTable);
+        console.log("debug set to true, otherwise would have created the new record in "+slugTableName);
     }
 
     //check for sister pubs
@@ -278,12 +273,10 @@ console.log('secondaries post sisters');
 console.log(secondaryPubs);
     //secondary publications
     if (secondaryPubs) {
-        //check for All CT dailies and recreate secondary Pubs
-        //this is usually where we run into trouble as we need to see how many other secondary publications
-        //we need to create. If it is 10+ we may run out of time (30 seconds max)
+        //check for All Midwest/Communities and recreate secondary Pubs
         for (let secondaryPub of secondaryPubs) {
-            //checking for all All CT dailies
-            if (secondaryPub.name == 'All CT dailies') {
+            //checking for All Midwest/Communities
+            if (secondaryPub.name == 'All Midwest/Communities') {
                 let newSecondaryPubs = [];
                 //we need to grab all the publications and set into secondaryPubs
                 const dailiesView = publicationTable.getView('Daily papers');
@@ -300,13 +293,32 @@ console.log(secondaryPubs);
             }
         }
         // console.log(secondaryPubs);
-        //get the array ready for secondary pub creation
         //remove the Primary fields from the Secondary Publication
         if (recordToCreate.fields['Channel ID']) {
             delete recordToCreate.fields['Channel ID']
         }
         if (recordToCreate.fields['Primary Site']) {
             delete recordToCreate.fields['Primary Site']
+        }
+        
+        //creating each of the Secondary Publications in Budgets
+        let secondaryRecords = [];
+        for (let secondaryPub of secondaryPubs) {
+            let createThisRecord = recordToCreate;
+            if (recordToCreate.fields['Primary Publication'][0].name == secondaryPub.name) {
+                console.log("primary pub and secondary pub match, skipping");
+            } else {
+                //create the Secondary Publication
+                console.log(`Creating Secondary Publication in Budget for `+secondaryPub.name);
+                console.log(secondaryPub);
+                createThisRecord.fields['Secondary Publication'] = [secondaryPub];
+                createThisRecord.fields['Primary Record Lookup'] = [{id:primaryRecordId}];
+                createThisRecord.fields['Primary Record ID'] = primaryRecordId;
+                createThisRecord.fields['Primary Created Time'] = primaryCreatedTime;
+                createThisRecord.fields['Secondary check'] = true;
+                secondaryRecords.push( {fields: clone(createThisRecord.fields)} );
+                console.log(secondaryRecords);
+            }
         }
         
         //creating each of the Secondary Publications in Budgets
@@ -331,7 +343,7 @@ console.log(secondaryPubs);
                     secondaryId = await slugTable.createRecordAsync(recordToCreate.fields);
                     secondaryIds.push({id: secondaryId});
                 } else {
-                    console.log("debug set to true, otherwise would have created the secondary record in "+budgetTable);
+                    console.log("debug set to true, otherwise would have created the secondary record in "+slugTableName);
                 }
             }
         }
@@ -349,16 +361,18 @@ console.log(secondaryPubs);
 
         }
     }
-    console.log(`Created new record in Slugs, removing from Dev table`)
-    //remove from the temp table 
-    if (debug == "false") {
-        //we need to update the secondary pub setting on the original record
-        await slugTempTable.updateRecordAsync(thisRecordId,
-            {'Secondary Publication': null}
-        );
-
-    } else {
-        console.log("debug set to true, otherwise would have removed the secondary pub setting in "+txTable);
-    }
 }
 fields = {};
+
+//let's set to archive and delete records later so we can retrieve them if needed.
+console.log(`Created new record in Slugs, removing from Dev table`)
+//set to archive from the temp table 
+if (debug == "false") {
+    slugTempTable.updateRecordAsync(newRecord.id,
+        {
+            'Automations complete': true
+        }
+    );
+} else {
+    console.log("debug set to true, otherwise would have set the new record in "+slugTempTableName+" to archive");
+}

@@ -1,3 +1,5 @@
+//TX Sync Primary + Secondary try/catch
+//Sync specific Primary and Secondary Fields
 /** Created by Kerry Mraz (kerry.mraz@hearst.com) part of the HNP IT Editorial Team
  * The script is designed to take recently updated records in the 'Budget' Table,
  * check to see if it is a primary or secondary. If primary, specific fields will
@@ -92,11 +94,10 @@ if (`${inputConfig.lastModifiedBy}` != 'Automations' ||
                 field:'Live URL',
                 type: 'text'
             },
-            //we don't wan't spike to modify on primary or secondaries
-        // thisSpike: { 
-        //         field:'🗑 Spike',
-        //         type: 'checkbox'
-        //     },
+        thisExclude: { 
+                field:'Exclude from WCM',
+                type: 'checkbox'
+            },
     };
 
     const table = base.getTable(`${inputConfig.thisTable}`);
@@ -105,7 +106,7 @@ if (`${inputConfig.lastModifiedBy}` != 'Automations' ||
     if (`${inputConfig.thisPrimaryRecordId}` == "null") {
 
         //primary record
-        console.log('Primary Record - sync with secondaries')
+        console.log('Primary Record - sync with secondaries');
         //set up fields to update
         let fields = {};
         for (let property in updateFields) {
@@ -146,12 +147,29 @@ if (`${inputConfig.lastModifiedBy}` != 'Automations' ||
             console.log(secondaryId);
             console.log(fields);
             if (`${inputConfig.debug}` == "false") {
+//this can be refactored to push one time instead of multiple...
                 table.updateRecordAsync(secondaryId, fields);
             } else {
                 console.log('debug is set to true, nothing changed');
             }
         }
-        table.updateRecordAsync(`${inputConfig.thisAirtableId}`, {'MDW-Com update': false});
+        let count = 0;
+        const maxTries = 3;
+        while(true) {
+            try {
+                table.updateRecordAsync(`${inputConfig.thisAirtableId}`, {'MDW-Com update': false});
+                break;
+            } catch (e) {
+                // handle exception
+                if (++count == maxTries) {
+                    console.error(`Max retries (${maxTries}) exhausted, final error thrown:`);
+                    throw e;
+                } else {
+                    console.error(`Error during attempt #${count+1}:`);
+                    console.error(e);
+                }
+            }
+        }
     } else {
         //secondary record
             //we need to first find the primary pub
@@ -166,7 +184,6 @@ if (`${inputConfig.lastModifiedBy}` != 'Automations' ||
 
         console.log('Secondary Record - sync with primary');
         let primaryRecordId = `${inputConfig.thisPrimaryRecordId}`;
-        //let primaryRecord = existingRecords.getRecord(primaryRecordId);
         let primaryRecord = await table.selectRecordAsync(primaryRecordId,
         { 
             fields: theseFields,

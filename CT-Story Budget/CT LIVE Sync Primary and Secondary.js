@@ -16,45 +16,46 @@ let recordsToCreate = [];
 const fields = {};
 const slugTable = base.getTable(slugTableName);
 const view = slugTable.getView('Modifed in the last day');
-const viewAfterToday = slugTable.getView('Last Week+');
+const viewAfterToday = slugTable.getView('Last Month+');
 
-let thisRecord = await viewAfterToday.selectRecordAsync(
+let thisRecord = await slugTable.selectRecordAsync(
     thisAirtableId,
     {fields: 
         [
+            // "Channel ID", //removed for consistency with Form submission KM 12/18/23
+            "Created time",
+            "Exclude from WCM",
+            "Filing deadline",
+            "In Cue?",
+            "Live URL",
+            "Notes",
+            "Other Media",
+            "Photos",
+            "Primary Publication",
+            "Print Pub Date",
+            "Published/Scheduled Time",
             "Reporters",
+            "Secondary Publication",
+            "Secondary Records", //not used it record creation, but in record comparison later on
+            "Slug Key",
             "Story Budget",
             "Web ETA",
-            "Print Pub Date",
-            "Notes",
-            "Exclude from WCM",
             "WCM Status",
-            "Words (est.)",
-            "In Cue?",
-            "Published/Scheduled Time",
             "Words (actual)",
-            "Photos",
-            "Other Media",
-            "Filing deadline",
-            "Slug Key",
-            "Live URL",
-            "Photos",
-            "Channel ID",
-            "Primary Publication",
-            "Secondary Publication",
-            "Created time",
-            "Secondary Records"
+            "Words (est.)",
         ]
     }
 );
 console.log(thisRecord);
+if (thisRecord == null) {
+    throw new Error('This record does not exists in the view');
+}
 
-let secondaryPubs, primaryCreatedTime;
 for (let field of slugTable.fields) {
     // console.log(`Field Name: `+field.name)
-    if (
+    if ( 
+        // field.name == "Channel ID" || //removed for consistency with Form submission KM 12/18/23
         field.name == "Created time" ||
-        field.name == "Channel ID" ||
         field.name == "Exclude from WCM" ||
         field.name == "Filing deadline" ||
         field.name == "In Cue?" ||
@@ -67,6 +68,8 @@ for (let field of slugTable.fields) {
         field.name == "Published/Scheduled Time" ||
         field.name == "Reporters" ||
         field.name == "Secondary Publication" ||
+        // purposely commented out KM 12/18/23
+        // field.name == "Secondary Publication" not used in creation but later on in comparison
         field.name == "Slug Key" ||
         field.name == "Story Budget" ||
         field.name == "Web ETA" ||
@@ -81,7 +84,10 @@ for (let field of slugTable.fields) {
         } else if (field.name == "Created time") {
             //get the list of secondary publications to write to
             primaryCreatedTime = thisRecord.getCellValue(field.name);
-        } else if (field.name == "Other Media" || field.name == "Created By") {
+        } else if (
+            field.name == "Other Media" || 
+            field.name == "Created By"
+        ) {
             //requires a different input from text/numbers/etc
             let record = thisRecord.getCellValue(field.name);
             if (record) {
@@ -92,6 +98,7 @@ for (let field of slugTable.fields) {
             }
         } else {
             // console.log(field.name + `: newRecord value `+record.getCellValue(field.name))
+            // console.log(field.name + `: newRecord`);
             fields[field.name] = thisRecord.getCellValue(field.name);
         }
     }
@@ -106,7 +113,6 @@ if (debug == "false") {
     //update the santized slug
     slugTable.updateRecordAsync(thisAirtableId, {
         'Secondary Publication': null,
-        'MDW-Com update': false
     });
 } else {
     console.log("debug set to true, no changes made - Primary Entry");
@@ -122,6 +128,9 @@ if (secondaries) {
 
 console.log(`recordsToCreate:`);
 console.log(recordsToCreate);
+const publicationTable = base.getTable('🔒 Publications');
+const dailiesView = publicationTable.getView('Daily papers');
+const publicationTitles = await dailiesView.selectRecordsAsync({fields: ['Publication Title']});
 for (let recordToCreate of recordsToCreate) {
     //secondary publications
     console.log('secondaryPubs0');
@@ -163,14 +172,11 @@ for (let recordToCreate of recordsToCreate) {
         newSecondaryPubs = [];
         for (let secondaryPub of secondaryPubs) {
             //checking for all texas
-            if (secondaryPub.name == 'All Texas dailies') {
+            if (secondaryPub.name == 'All CT dailies') {
                 //we need to grab all the publications and set into secondaryPubs
-                const publicationTable = base.getTable('🔒 Publications');
-                const dailiesView = publicationTable.getView('Daily papers');
-                const publicationTitles = await dailiesView.selectRecordsAsync({fields: ['Publication Title']});
                 console.log(recordToCreate.fields['Primary Publication'][0])
                 for (let publicationTitle of publicationTitles.records) {
-                    if (publicationTitle.name != 'Wires' && publicationTitle.name != 'All Texas dailies' && publicationTitle.name != recordToCreate.fields['Primary Publication'][0].name ) {
+                    if (publicationTitle.name != 'Wires' && publicationTitle.name != 'All CT dailies' && publicationTitle.name != recordToCreate.fields['Primary Publication'][0].name ) {
                         newSecondaryPubs.push(publicationTitle); 
                     }
                 }
@@ -186,7 +192,7 @@ for (let recordToCreate of recordsToCreate) {
                 console.log('removed WCM ID for Secondary pub');
                 delete recordToCreate.fields['WCM ID'];
             }
-            
+        
             let secondaryIds = [];
             //creating each of the Secondary Publications in Budgets
             for (let secondaryPub of secondaryPubs) {
